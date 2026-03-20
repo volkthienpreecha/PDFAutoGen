@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from .config import load_config
+from .generator import generate_documents
+from .validation import validate_manifest
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Benign one-page PDF autogenerator")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    generate_parser = subparsers.add_parser("generate", help="Generate benign one-page PDFs")
+    generate_parser.add_argument("--config", required=True, help="Path to YAML configuration")
+
+    alias_parser = subparsers.add_parser("generate-base", help="Alias for generate")
+    alias_parser.add_argument("--config", required=True, help="Path to YAML configuration")
+
+    validate_parser = subparsers.add_parser("validate", help="Validate a manifest and its PDFs")
+    validate_parser.add_argument("--manifest", required=True, help="Path to manifest.jsonl")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.command in {"generate", "generate-base"}:
+        config = load_config(args.config)
+        rows = generate_documents(config)
+        print(json.dumps({"generated_rows": len(rows), "manifest": str(config.manifest_path)}))
+        return 0
+
+    if args.command == "validate":
+        valid, issues = validate_manifest(Path(args.manifest))
+        print(json.dumps({"valid": valid, "issue_count": len(issues), "issues": issues}))
+        return 0 if valid else 1
+
+    parser.error(f"Unknown command: {args.command}")
+    return 2
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())
