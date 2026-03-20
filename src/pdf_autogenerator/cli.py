@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .config import load_config
 from .generator import generate_documents
+from .qa import run_qa
 from .validation import validate_manifest
 
 
@@ -22,6 +23,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate_parser = subparsers.add_parser("validate", help="Validate a manifest and its PDFs")
     validate_parser.add_argument("--manifest", required=True, help="Path to manifest.jsonl")
+
+    qa_parser = subparsers.add_parser("qa", help="Run dataset QA checks against a manifest")
+    qa_parser.add_argument("--manifest", required=True, help="Path to manifest.jsonl")
     return parser
 
 
@@ -39,6 +43,11 @@ def main(argv: list[str] | None = None) -> int:
         valid, issues = validate_manifest(Path(args.manifest))
         print(json.dumps({"valid": valid, "issue_count": len(issues), "issues": issues}))
         return 0 if valid else 1
+
+    if args.command == "qa":
+        report = run_qa(Path(args.manifest))
+        print(json.dumps(report, indent=2))
+        return 0 if report["overall_pass"] else 1
 
     parser.error(f"Unknown command: {args.command}")
     return 2

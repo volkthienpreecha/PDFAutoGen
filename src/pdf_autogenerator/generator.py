@@ -14,6 +14,9 @@ from .rendering import build_theme, plan_fits, render_pdf
 from .templates import build_document_plan, resolve_templates
 from .validation import validate_generated_pdf
 
+MAX_GENERATION_ATTEMPTS = 16
+MAX_OVERFLOW_ATTEMPTS = 4
+
 
 def weighted_choice(rng: Random, weighted: dict[str, float]) -> str:
     total = sum(value for value in weighted.values() if value > 0)
@@ -30,6 +33,64 @@ def weighted_choice(rng: Random, weighted: dict[str, float]) -> str:
 
 def doc_id_for(seed: int, index: int) -> str:
     return f"benign-{seed}-{index:06d}"
+
+
+def largest_remainder_counts(weighted: dict[str, float], total: int) -> dict[str, int]:
+    positive = {key: weight for key, weight in weighted.items() if weight > 0}
+    if not positive:
+        raise ValueError("At least one positive weight is required")
+    total_weight = sum(positive.values())
+    counts: dict[str, int] = {}
+    remainders: list[tuple[float, float, str]] = []
+    assigned = 0
+    for key, weight in positive.items():
+        exact = (weight / total_weight) * total
+        count = int(exact)
+        counts[key] = count
+        assigned += count
+        remainders.append((exact - count, weight, key))
+    for key in weighted:
+        counts.setdefault(key, 0)
+    if assigned < total:
+        remainders.sort(key=lambda item: (-item[0], -item[1], item[2]))
+        for _, _, key in remainders[: total - assigned]:
+            counts[key] += 1
+    return counts
+
+
+def build_template_schedule(config: GeneratorConfig, all_templates: list[Any]) -> list[Any]:
+    templates_by_source: dict[str, list[Any]] = {}
+    for template in all_templates:
+        templates_by_source.setdefault(template.source_type, []).append(template)
+
+    effective_family_weights = {
+        family: weight
+        for family, weight in config.family_weights.items()
+        if weight > 0 and templates_by_source.get(family)
+    }
+    family_counts = largest_remainder_counts(effective_family_weights, config.total_count)
+    schedule: list[Any] = []
+    rng = Random(f"schedule:{config.seed}")
+    for family, count in family_counts.items():
+        if count <= 0:
+            continue
+        family_templates = list(templates_by_source[family])
+        rng.shuffle(family_templates)
+        template_counts = largest_remainder_counts(
+            {template.template_id: 1.0 for template in family_templates},
+            count,
+        )
+        family_schedule: list[Any] = []
+        for template in family_templates:
+            family_schedule.extend([template] * template_counts[template.template_id])
+        rng.shuffle(family_schedule)
+        schedule.extend(family_schedule)
+    rng.shuffle(schedule)
+    if len(schedule) != config.total_count:
+        raise RuntimeError(
+            f"Template schedule length mismatch: expected {config.total_count}, got {len(schedule)}"
+        )
+    return schedule
 
 
 def choose_variant(
@@ -88,10 +149,7 @@ def generate_documents(config: GeneratorConfig) -> list[dict[str, Any]]:
     }
     generated_rows: list[dict[str, Any]] = []
     config.base_output_dir.mkdir(parents=True, exist_ok=True)
-
-    templates_by_source: dict[str, list[Any]] = {}
-    for template in all_templates:
-        templates_by_source.setdefault(template.source_type, []).append(template)
+    template_schedule = build_template_schedule(config, all_templates)
 
     for index in range(config.total_count):
         doc_id = doc_id_for(config.seed, index)
@@ -111,13 +169,12 @@ def generate_documents(config: GeneratorConfig) -> list[dict[str, Any]]:
 
         success_row: dict[str, Any] | None = None
         last_row: ManifestRow | None = None
-        for attempt in range(1, 5):
+        scheduled_template = template_schedule[index]
+        overflow_attempts = 0
+        for attempt in range(1, MAX_GENERATION_ATTEMPTS + 1):
             rng = Random(f"{config.seed}:{index}:{attempt}")
-            source_type = weighted_choice(rng, config.family_weights)
-            candidate_templates = templates_by_source.get(source_type, [])
-            if not candidate_templates:
-                raise ValueError(f"No templates resolved for source_type={source_type}")
-            template = rng.choice(candidate_templates)
+            template = scheduled_template
+            source_type = template.source_type
             variant = choose_variant(config, rng, template, font_registry)
             page_size = PAGE_SIZE_POINTS[variant.page_size]
             plan = build_document_plan(template, variant, snippet_bank, page_size, rng)
@@ -156,6 +213,7 @@ def generate_documents(config: GeneratorConfig) -> list[dict[str, Any]]:
             if not plan_fits(plan, theme):
                 theme = build_theme(font, variant, tighten_spacing=True)
                 if not plan_fits(plan, theme):
+                    overflow_attempts += 1
                     overflow_resampled = True
                     last_row = ManifestRow(
                         doc_id=doc_id,
@@ -182,6 +240,8 @@ def generate_documents(config: GeneratorConfig) -> list[dict[str, Any]]:
                         notes={"reason": "overflow"},
                         content_fingerprint=plan.content_fingerprint,
                     )
+                    if overflow_attempts >= MAX_OVERFLOW_ATTEMPTS:
+                        break
                     continue
 
             render_pdf(destination, plan, page_size, theme)

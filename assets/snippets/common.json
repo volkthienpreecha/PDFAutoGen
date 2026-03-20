@@ -76,5 +76,13 @@
     "October",
     "November",
     "December"
+  ],
+  "small_notes": [
+    "Retain a copy for routine reference.",
+    "Prepared for standard internal use.",
+    "Please verify dates against the current schedule.",
+    "Questions may be directed to the office listed above.",
+    "Records should be updated if contact details change.",
+    "Issued for ordinary administrative reference."
   ]
 }

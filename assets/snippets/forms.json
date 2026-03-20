@@ -27,7 +27,21 @@
     "I understand the reporting process.",
     "I will keep a copy for my records.",
     "I have completed all required fields.",
-    "I will notify the office of any updates."
+    "I will notify the office of any updates.",
+    "I have verified the listed program location.",
+    "I reviewed the contact information with staff.",
+    "I understand the follow-up communication process.",
+    "I confirmed the preferred phone and email details."
+  ],
+  "signature_labels": [
+    "Participant Signature",
+    "Reviewer Signature",
+    "Requestor Signature",
+    "Coordinator Signature",
+    "Applicant Signature",
+    "Staff Signature",
+    "Supervisor Signature",
+    "Records Signature"
   ],
   "acknowledgement_lines": [
     "Please print clearly and complete all fields before signing the final acknowledgement line.",

@@ -91,8 +91,8 @@ def _base_regions(
 def _form_regions(variant: VariantChoices, page_size: tuple[float, float]) -> dict[str, RegionSpec]:
     width, height = page_size
     margin = _margin_points(variant)
-    header_height = 50.0 if variant.has_header else 0.0
-    footer_height = 26.0 if variant.has_footer else 0.0
+    header_height = 64.0 if variant.has_header else 0.0
+    footer_height = 40.0 if variant.has_footer else 0.0
     usable_width = width - (2 * margin)
     top_y = height - margin
     bottom_y = margin
@@ -178,7 +178,7 @@ def _main_title_blocks(title: str, line: str, *, bold_title: bool = True) -> lis
     ]
 
 
-def _footer_blocks(variant: VariantChoices, footer_text: str) -> list[BlockSpec]:
+def _footer_blocks(rng: Random, bank: dict[str, Any], variant: VariantChoices, footer_text: str) -> list[BlockSpec]:
     if not variant.has_footer:
         return []
     blocks = [BlockSpec(kind="footer", text=footer_text, small=True, align="center")]
@@ -186,7 +186,7 @@ def _footer_blocks(variant: VariantChoices, footer_text: str) -> list[BlockSpec]
         blocks.append(
             BlockSpec(
                 kind="footer",
-                text="Generated benchmark document for benign layout variation.",
+                text=choose(rng, bank["common"]["small_notes"]),
                 small=True,
                 align="center",
             )
@@ -236,7 +236,7 @@ def _academic_composer(
             ),
         )
 
-    footer = _footer_blocks(variant, "Academic handout")
+    footer = _footer_blocks(rng, bank, variant, choose(rng, ["Course handout", "Class copy", "Discussion copy"]))
     blocks_by_region = {"main": main_blocks, "footer": footer}
     if variant.column_mode == "double":
         split_point = max(len(main_blocks) // 2, 3)
@@ -298,7 +298,7 @@ def _business_composer(
                 boxed=True,
             ),
         )
-    footer = _footer_blocks(variant, company)
+    footer = _footer_blocks(rng, bank, variant, company)
     blocks_by_region = {"main": body, "footer": footer}
     if variant.column_mode == "double":
         split_point = max(len(body) // 2, 3)
@@ -364,10 +364,10 @@ def _form_composer(
             ),
         )
     signature_region = [
-        BlockSpec(kind="signature_block", items=["Participant Signature", "Reviewer Signature"]),
+        BlockSpec(kind="signature_block", items=choose_many(rng, forms["signature_labels"], 2)),
         BlockSpec(kind="meta_line", text=f"Completed on {make_date_text(rng, bank)}"),
     ]
-    footer = _footer_blocks(variant, "Administrative form")
+    footer = _footer_blocks(rng, bank, variant, choose(rng, ["Administrative form", "Office copy", "Records copy"]))
     blocks_by_region = {
         "fields": field_region,
         "checklist": checklist_region,
@@ -410,7 +410,7 @@ def _policy_composer(
     for section in sections:
         body.append(BlockSpec(kind="section_heading", text=section, bold=rng.random() < 0.6))
         body.append(BlockSpec(kind="paragraph", text=sentence_paragraph(rng, policy["paragraphs"], 1, 2)))
-    footer = _footer_blocks(variant, choose(rng, policy["footer_lines"]))
+    footer = _footer_blocks(rng, bank, variant, choose(rng, policy["footer_lines"]))
     blocks_by_region = {"main": body, "footer": footer}
     if variant.has_header:
         blocks_by_region["header"] = header_blocks
@@ -431,8 +431,8 @@ def _policy_composer(
 def _invoice_rows(rng: Random, bank: dict[str, Any], count: int) -> tuple[list[list[str]], float]:
     rows: list[list[str]] = []
     total = 0.0
-    for _ in range(count):
-        description = choose(rng, bank["invoice"]["item_names"])
+    descriptions = choose_many(rng, bank["invoice"]["item_names"], count)
+    for description in descriptions:
         quantity = rng.randint(1, 4)
         unit_price = rng.randint(18, 175) + rng.random()
         amount = quantity * unit_price
@@ -474,7 +474,7 @@ def _invoice_composer(
             )
         ],
         "notes": [BlockSpec(kind="paragraph", text=choose(rng, bank["invoice"]["footer_lines"]))],
-        "footer": _footer_blocks(variant, "Billing copy"),
+        "footer": _footer_blocks(rng, bank, variant, choose(rng, ["Billing copy", "Accounts copy", "Receipt copy"])),
         "_fingerprint": [
             BlockSpec(
                 kind="fingerprint",
@@ -528,7 +528,7 @@ def _syllabus_composer(
         BlockSpec(kind="section_heading", text="Schedule", bold=True),
         BlockSpec(kind="table", columns=["Week", "Topic"], rows=[[str(index + 1), topic] for index, topic in enumerate(topics)], boxed=True),
     ]
-    footer = _footer_blocks(variant, course)
+    footer = _footer_blocks(rng, bank, variant, course)
     blocks_by_region = {"main": body, "footer": footer}
     if variant.column_mode == "double":
         split_point = 4
