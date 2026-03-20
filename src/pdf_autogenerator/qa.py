@@ -14,8 +14,10 @@ import fitz
 from PIL import Image
 from pypdf import PdfReader
 
+from .config import GeneratorConfig
+from .fonts import FONT_DEFINITIONS
 from .manifest import read_manifest
-from .templates import TEMPLATES, get_template
+from .templates import TEMPLATES, get_template, resolve_templates
 
 
 REQUIRED_FIELDS = [
@@ -58,6 +60,23 @@ class QAThresholds:
     max_char_count: int = 5000
 
 
+@dataclass(frozen=True)
+class QAExpectations:
+    families: set[str]
+    template_ids: set[str]
+    font_families: set[str]
+    page_sizes: set[str]
+    margin_presets: set[str]
+    density_presets: set[str]
+    header_values: set[bool]
+    footer_values: set[bool]
+    small_text_values: set[bool]
+    table_values: set[bool]
+    column_values: set[str]
+    mode: str
+    warnings: tuple[str, ...] = ()
+
+
 def _check(passed: bool, details: dict[str, Any], warnings: list[str] | None = None) -> dict[str, Any]:
     return {
         "status": "pass" if passed else "fail",
@@ -74,23 +93,101 @@ def _manual(details: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _expected_boolean_values(*, required_any: bool, optional_any: bool, probability: float) -> set[bool]:
+    values: set[bool] = set()
+    if required_any:
+        values.add(True)
+    if optional_any:
+        if probability > 0:
+            values.add(True)
+        if probability < 1:
+            values.add(False)
+    return values or {False}
+
+
+def _expected_table_values(templates: list[Any], probability: float) -> set[bool]:
+    values: set[bool] = set()
+    if any(template.requires_table_region for template in templates):
+        values.add(True)
+    if any(template.supports_table_region and not template.requires_table_region for template in templates):
+        if probability > 0:
+            values.add(True)
+        if probability < 1:
+            values.add(False)
+    if any(not template.requires_table_region and not template.supports_table_region for template in templates):
+        values.add(False)
+    return values or {False}
+
+
+def _build_expectations(
+    generated_rows: list[dict[str, Any]],
+    config: GeneratorConfig | None,
+) -> QAExpectations:
+    if config is None:
+        return QAExpectations(
+            families={row.get("source_type") for row in generated_rows if row.get("source_type")},
+            template_ids={row.get("template_id") for row in generated_rows if row.get("template_id")},
+            font_families={row.get("font_family") for row in generated_rows if row.get("font_family")},
+            page_sizes={row.get("page_size") for row in generated_rows if row.get("page_size")},
+            margin_presets={row.get("margin_preset") for row in generated_rows if row.get("margin_preset")},
+            density_presets={row.get("density_preset") for row in generated_rows if row.get("density_preset")},
+            header_values={row.get("has_header") for row in generated_rows if row.get("has_header") is not None},
+            footer_values={row.get("has_footer") for row in generated_rows if row.get("has_footer") is not None},
+            small_text_values={row.get("has_small_text") for row in generated_rows if row.get("has_small_text") is not None},
+            table_values={row.get("has_table_region") for row in generated_rows if row.get("has_table_region") is not None},
+            column_values={row.get("column_mode") for row in generated_rows if row.get("column_mode")},
+            mode="inferred",
+            warnings=("qa_expectations_inferred_from_manifest",),
+        )
+
+    expected_templates = [
+        template
+        for template in resolve_templates(config.template_allowlist)
+        if config.family_weights.get(template.source_type, 0) > 0
+    ]
+    return QAExpectations(
+        families={template.source_type for template in expected_templates},
+        template_ids={template.template_id for template in expected_templates},
+        font_families={FONT_DEFINITIONS[key].display_name for key in config.font_allowlist},
+        page_sizes={page_size for page_size, weight in config.page_size_weights.items() if weight > 0},
+        margin_presets=set(config.margin_presets),
+        density_presets=set(config.density_presets),
+        header_values=_expected_boolean_values(
+            required_any=any(template.requires_header for template in expected_templates),
+            optional_any=any(not template.requires_header for template in expected_templates),
+            probability=config.header_probability,
+        ),
+        footer_values=_expected_boolean_values(
+            required_any=False,
+            optional_any=True,
+            probability=config.footer_probability,
+        ),
+        small_text_values=_expected_boolean_values(
+            required_any=False,
+            optional_any=True,
+            probability=config.small_text_probability,
+        ),
+        table_values=_expected_table_values(expected_templates, config.table_region_probability),
+        column_values=(
+            {"single", "double"} if any(template.allows_two_columns for template in expected_templates) else {"single"}
+        ),
+        mode="config",
+    )
+
+
 def run_qa(
     manifest_path: Path,
+    config: GeneratorConfig | None = None,
     thresholds: QAThresholds | None = None,
     sample_per_family: int = 5,
 ) -> dict[str, Any]:
     thresholds = thresholds or QAThresholds()
     rows = read_manifest(manifest_path)
     generated_rows = [row for row in rows if row.get("status") == "generated"]
-    template_registry = {template.template_id: template for template in TEMPLATES}
-    allowed_families = {template.source_type for template in TEMPLATES}
-    allowed_fonts = {
-        "Source Serif 4",
-        "Source Sans 3",
-        "Libre Baskerville",
-        "Liberation Serif",
-        "Liberation Sans",
-    }
+    expectations = _build_expectations(generated_rows, config)
+    allowed_families = expectations.families
+    allowed_fonts = expectations.font_families
+    expected_templates = expectations.template_ids
     allowed_double = {template.template_id for template in TEMPLATES if template.allows_two_columns}
 
     issues: defaultdict[str, list[Any]] = defaultdict(list)
@@ -280,20 +377,28 @@ def run_qa(
     ]
 
     missing_families = sorted(family for family in allowed_families if family_counts[family] == 0)
-    missing_templates = [template.template_id for template in TEMPLATES if template_counts[template.template_id] == 0]
+    missing_templates = sorted(template_id for template_id in expected_templates if template_counts[template_id] == 0)
     templates_below_min = [
         template_id
-        for template_id, count in template_counts.items()
-        if count < thresholds.min_template_count
+        for template_id in expected_templates
+        if template_counts[template_id] < thresholds.min_template_count
     ]
     family_template_variants = {
-        family: len({template_id for template_id, count in template_counts.items() if get_template(template_id).source_type == family and count > 0})
+        family: len(
+            {
+                template_id
+                for template_id, count in template_counts.items()
+                if get_template(template_id).source_type == family and count > 0
+            }
+        )
         for family in allowed_families
     }
+    expected_template_variants = Counter(get_template(template_id).source_type for template_id in expected_templates)
     low_variant_families = [
         family
         for family, variant_count in family_template_variants.items()
-        if family_counts[family] > 0 and variant_count < min(2, len([t for t in TEMPLATES if t.source_type == family]))
+        if family_counts[family] > 0
+        and variant_count < min(2, expected_template_variants.get(family, 0))
     ]
 
     total_generated = len(generated_rows) or 1
@@ -350,6 +455,9 @@ def run_qa(
     family_coverage = _check(
         passed=not (missing_families or missing_templates or templates_below_min or low_variant_families),
         details={
+            "expectation_mode": expectations.mode,
+            "expected_families": sorted(allowed_families),
+            "expected_templates": sorted(expected_templates),
             "family_counts": dict(family_counts),
             "template_counts": dict(template_counts),
             "missing_families": missing_families,
@@ -357,23 +465,33 @@ def run_qa(
             "templates_below_min": templates_below_min,
             "low_variant_families": low_variant_families,
         },
+        warnings=list(expectations.warnings),
     )
 
     layout_diversity = _check(
         passed=all(
             [
-                {"letter", "a4"}.issubset(set(page_size_counts)),
-                len(margin_counts) >= 3,
-                len(density_counts) >= 3,
-                True in header_counts and False in header_counts,
-                True in footer_counts and False in footer_counts,
-                True in small_text_counts and False in small_text_counts,
-                True in table_counts and False in table_counts,
-                "double" in column_counts and "single" in column_counts,
+                expectations.page_sizes.issubset(set(page_size_counts)),
+                expectations.margin_presets.issubset(set(margin_counts)),
+                expectations.density_presets.issubset(set(density_counts)),
+                expectations.header_values.issubset(set(header_counts)),
+                expectations.footer_values.issubset(set(footer_counts)),
+                expectations.small_text_values.issubset(set(small_text_counts)),
+                expectations.table_values.issubset(set(table_counts)),
+                expectations.column_values.issubset(set(column_counts)),
                 not issues["invalid_double_column_template"],
             ]
         ),
         details={
+            "expectation_mode": expectations.mode,
+            "expected_page_sizes": sorted(expectations.page_sizes),
+            "expected_margin_presets": sorted(expectations.margin_presets),
+            "expected_density_presets": sorted(expectations.density_presets),
+            "expected_header_values": sorted(expectations.header_values),
+            "expected_footer_values": sorted(expectations.footer_values),
+            "expected_small_text_values": sorted(expectations.small_text_values),
+            "expected_table_values": sorted(expectations.table_values),
+            "expected_column_values": sorted(expectations.column_values),
             "page_size_counts": dict(page_size_counts),
             "margin_counts": dict(margin_counts),
             "density_counts": dict(density_counts),
@@ -383,6 +501,7 @@ def run_qa(
             "table_counts": dict(table_counts),
             "column_counts": dict(column_counts),
         },
+        warnings=list(expectations.warnings),
     )
 
     typography_diversity = _check(
@@ -391,9 +510,21 @@ def run_qa(
             and not white_text_hits
             and (min(font_sizes) >= 7.0 if font_sizes else False)
             and (max(font_sizes) <= 18.0 if font_sizes else False)
-            and (small_text_sizes and min(small_text_sizes) >= 7.0 and max(small_text_sizes) <= 8.1)
+            and (
+                (
+                    True not in expectations.small_text_values
+                    and not small_text_sizes
+                )
+                or (
+                    small_text_sizes
+                    and min(small_text_sizes) >= 7.0
+                    and max(small_text_sizes) <= 8.1
+                )
+            )
         ),
         details={
+            "expectation_mode": expectations.mode,
+            "expected_fonts": sorted(allowed_fonts),
             "font_counts": dict(font_counts),
             "font_size_min_max": [min(font_sizes) if font_sizes else None, max(font_sizes) if font_sizes else None],
             "small_text_size_min_max": [
@@ -402,13 +533,18 @@ def run_qa(
             ],
             "white_text_hits": sorted(set(white_text_hits)),
         },
+        warnings=list(expectations.warnings),
     )
 
     content_realism = _check(
-        passed=not keyword_hits and not any("lorem ipsum" in text.lower() for text in texts.values()) and not repeated_lines,
+        passed=not keyword_hits
+        and not any("lorem ipsum" in text.lower() for text in texts.values())
+        and not repeated_lines
+        and not near_duplicates,
         details={
             "keyword_hits": keyword_hits,
             "repeated_lines": repeated_lines[:10],
+            "near_duplicates": near_duplicates[:10],
         },
     )
 
@@ -526,5 +662,6 @@ def run_qa(
         "manifest_path": str(manifest_path),
         "row_count": len(rows),
         "generated_count": len(generated_rows),
+        "expectation_mode": expectations.mode,
         "checks": checks,
     }

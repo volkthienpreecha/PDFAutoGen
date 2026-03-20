@@ -17,9 +17,13 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Run dataset QA checks against a manifest")
     parser.add_argument("--manifest", required=True, help="Path to manifest.jsonl")
+    parser.add_argument("--config", required=False, help="Optional YAML config for profile-aware QA")
     args = parser.parse_args()
 
-    report = run_qa(Path(args.manifest))
+    from pdf_autogenerator.config import load_config  # noqa: E402
+
+    config = load_config(args.config) if args.config else None
+    report = run_qa(Path(args.manifest), config=config)
     print(json.dumps(report, indent=2))
     return 0 if report["overall_pass"] else 1
 

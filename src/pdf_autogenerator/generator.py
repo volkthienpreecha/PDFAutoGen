@@ -136,10 +136,22 @@ def _remove_invalid_output(path: Path | None) -> None:
         path.unlink()
 
 
+def _prepare_output_root(config: GeneratorConfig) -> None:
+    if config.resume_mode != "overwrite":
+        return
+    if config.manifest_path.exists():
+        config.manifest_path.unlink()
+    if not config.base_output_dir.exists():
+        return
+    for path in config.base_output_dir.glob("*.pdf"):
+        path.unlink()
+
+
 def generate_documents(config: GeneratorConfig) -> list[dict[str, Any]]:
     font_registry = register_fonts(config.font_allowlist)
     snippet_bank = load_snippet_bank()
     all_templates = resolve_templates(config.template_allowlist)
+    _prepare_output_root(config)
     rows = read_manifest(config.manifest_path)
     manifest_index = build_manifest_index(rows)
     seen_fingerprints = {

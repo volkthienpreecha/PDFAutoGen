@@ -108,3 +108,14 @@ def test_resume_skips_existing_outputs_without_rewriting(tmp_path: Path) -> None
     assert len(manifest_after) == len(manifest_before)
     for row in generated:
         assert Path(row["pdf_path"]).stat().st_mtime == before[row["doc_id"]]
+
+
+def test_overwrite_replaces_manifest_instead_of_appending(tmp_path: Path) -> None:
+    config = make_config(tmp_path, total_count=12, seed=20260402, resume_mode="overwrite")
+    first_rows = generate_documents(config)
+    second_rows = generate_documents(config)
+    manifest_rows = read_manifest(config.manifest_path)
+    assert len(first_rows) == 12
+    assert len(second_rows) == 12
+    assert len(manifest_rows) == 12
+    assert len({row["doc_id"] for row in manifest_rows}) == 12

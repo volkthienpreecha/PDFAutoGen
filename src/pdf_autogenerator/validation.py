@@ -71,16 +71,16 @@ def validate_generated_pdf(path: Path, row: dict[str, Any]) -> ValidationResult:
 def validate_manifest(manifest_path: Path) -> tuple[bool, list[str]]:
     rows = read_manifest(manifest_path)
     issues: list[str] = []
-    doc_ids: dict[str, str | None] = {}
+    seen_doc_ids: set[str] = set()
     for index, row in enumerate(rows):
         doc_id = row.get("doc_id")
         if not doc_id:
             issues.append(f"row:{index}:missing_doc_id")
             continue
         pdf_path = row.get("pdf_path")
-        if doc_id in doc_ids and doc_ids[doc_id] != pdf_path:
+        if doc_id in seen_doc_ids:
             issues.append(f"row:{index}:duplicate_doc_id")
-        doc_ids[doc_id] = pdf_path
+        seen_doc_ids.add(doc_id)
         if row.get("status") == "generated":
             if pdf_path is None:
                 issues.append(f"row:{index}:generated_missing_pdf_path")
@@ -88,6 +88,8 @@ def validate_manifest(manifest_path: Path) -> tuple[bool, list[str]]:
             result = validate_generated_pdf(Path(pdf_path), row)
             if not result.valid:
                 issues.append(f"row:{index}:{'|'.join(result.issues)}")
+            if int(row.get("page_count", 0)) != result.page_count:
+                issues.append(f"row:{index}:page_count_mismatch")
         else:
             if row.get("pdf_path") is not None:
                 issues.append(f"row:{index}:non_generated_pdf_path_present")

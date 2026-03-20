@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import date
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
@@ -47,7 +46,7 @@ def make_person_name(rng: Random, bank: dict[str, Any]) -> str:
 def make_date_text(rng: Random, bank: dict[str, Any]) -> str:
     month = choose(rng, bank["common"]["months"])
     day = rng.randint(1, 28)
-    year = date.today().year
+    year = int(choose(rng, bank["common"]["years"]))
     return f"{month} {day}, {year}"
 
 

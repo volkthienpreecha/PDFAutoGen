@@ -77,6 +77,14 @@
     "November",
     "December"
   ],
+  "years": [
+    2022,
+    2023,
+    2024,
+    2025,
+    2026,
+    2027
+  ],
   "small_notes": [
     "Retain a copy for routine reference.",
     "Prepared for standard internal use.",

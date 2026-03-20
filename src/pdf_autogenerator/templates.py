@@ -603,6 +603,20 @@ def build_document_plan(
     composer_bank["density_level"] = {"sparse": 0, "normal": 1, "dense": 2}[variant.density_preset]
     blocks_by_region = definition.composer(rng, variant, composer_bank, definition)
     fingerprint_block = blocks_by_region.pop("_fingerprint")[0]
+    fingerprint_metadata = dict(fingerprint_block.metadata)
+    fingerprint_metadata.update(
+        {
+            "page_size": variant.page_size,
+            "margin_preset": variant.margin_preset,
+            "density_preset": variant.density_preset,
+            "column_mode": variant.column_mode,
+            "has_header": variant.has_header,
+            "has_footer": variant.has_footer,
+            "has_small_text": variant.has_small_text,
+            "has_table_region": variant.has_table_region,
+            "font_family": variant.font_family,
+        }
+    )
     regions = definition.geometry_builder(variant, page_size)
     region_plans: list[RegionPlan] = []
     title = definition.display_name
@@ -619,5 +633,5 @@ def build_document_plan(
         template_family=definition.template_family,
         title=title,
         regions=region_plans,
-        content_fingerprint=make_content_fingerprint(fingerprint_block.metadata),
+        content_fingerprint=make_content_fingerprint(fingerprint_metadata),
     )

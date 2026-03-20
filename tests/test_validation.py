@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from pdf_autogenerator.config import GeneratorConfig
@@ -57,3 +58,26 @@ def test_manifest_validation_catches_duplicate_doc_ids_with_different_paths(tmp_
     valid, issues = validate_manifest(config.manifest_path)
     assert not valid
     assert any("duplicate_doc_id" in issue for issue in issues)
+
+
+def test_manifest_validation_catches_duplicate_doc_ids_with_same_path(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    rows = generate_documents(config)
+    append_manifest_row(config.manifest_path, dict(rows[0]))
+    valid, issues = validate_manifest(config.manifest_path)
+    assert not valid
+    assert any("duplicate_doc_id" in issue for issue in issues)
+
+
+def test_manifest_validation_catches_page_count_mismatch(tmp_path: Path) -> None:
+    config = make_config(tmp_path)
+    generate_documents(config)
+    rows = read_manifest(config.manifest_path)
+    rows[0]["page_count"] = 999
+    with config.manifest_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row))
+            handle.write("\n")
+    valid, issues = validate_manifest(config.manifest_path)
+    assert not valid
+    assert any("page_count_mismatch" in issue for issue in issues)

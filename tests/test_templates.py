@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from random import Random
 
 from pdf_autogenerator.content import load_snippet_bank
 from pdf_autogenerator.models import PAGE_SIZE_POINTS, VariantChoices
-from pdf_autogenerator.templates import TEMPLATES, build_document_plan
+from pdf_autogenerator.templates import TEMPLATES, build_document_plan, get_template
 
 
 def _variant_for(template_id: str) -> VariantChoices:
@@ -52,3 +53,26 @@ def test_each_template_builds_non_empty_document_plan() -> None:
         assert plan.title
         assert plan.content_fingerprint
         assert any(region.blocks for region in plan.regions)
+
+
+def test_content_fingerprint_changes_with_render_variant() -> None:
+    bank = load_snippet_bank()
+    template = get_template("lecture-handout")
+    base_variant = _variant_for(template.template_id)
+    variant_a = replace(
+        base_variant,
+        page_size="letter",
+        margin_preset="0.75in",
+        font_key="source_serif_4",
+        font_family="Source Serif 4",
+    )
+    variant_b = replace(
+        base_variant,
+        page_size="a4",
+        margin_preset="1.0in",
+        font_key="liberation_sans",
+        font_family="Liberation Sans",
+    )
+    plan_a = build_document_plan(template, variant_a, bank, PAGE_SIZE_POINTS["letter"], Random("fingerprint-seed"))
+    plan_b = build_document_plan(template, variant_b, bank, PAGE_SIZE_POINTS["a4"], Random("fingerprint-seed"))
+    assert plan_a.content_fingerprint != plan_b.content_fingerprint
