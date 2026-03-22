@@ -5,6 +5,8 @@ import json
 import sys
 from pathlib import Path
 
+from .audit import audit_dataset
+from .audit_config import load_audit_config
 from .config import load_config
 from .generator import generate_documents
 from .qa import run_qa
@@ -27,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     qa_parser = subparsers.add_parser("qa", help="Run dataset QA checks against a manifest")
     qa_parser.add_argument("--manifest", required=True, help="Path to manifest.jsonl")
     qa_parser.add_argument("--config", required=False, help="Optional YAML config for profile-aware QA")
+
+    audit_parser = subparsers.add_parser("audit", help="Run strict production dataset audit")
+    audit_parser.add_argument("--manifest", required=True, help="Path to manifest.jsonl")
+    audit_parser.add_argument("--config", required=True, help="Path to audit YAML configuration")
+    audit_parser.add_argument("--output", required=False, help="Optional path for JSON audit report")
     return parser
 
 
@@ -48,6 +55,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "qa":
         config = load_config(args.config) if args.config else None
         report = run_qa(Path(args.manifest), config=config)
+        print(json.dumps(report, indent=2))
+        return 0 if report["overall_pass"] else 1
+
+    if args.command == "audit":
+        audit_config = load_audit_config(args.config)
+        report = audit_dataset(
+            Path(args.manifest),
+            audit_config,
+            output_path=Path(args.output) if args.output else None,
+        )
         print(json.dumps(report, indent=2))
         return 0 if report["overall_pass"] else 1
 
